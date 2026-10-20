@@ -1,0 +1,1 @@
+Run npm install to copy exact upstream LICENSE, LICENSE.mecab and LICENSE.unidic. Keep these files in redistributions.
