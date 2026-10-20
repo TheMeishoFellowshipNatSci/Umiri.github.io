@@ -1,238 +1,72 @@
-import { MecabWorker } from "mecab-web-worker";
+const POSTPOSITIONS = new Set([
+  "を",
+  "に",
+  "へ",
+  "で",
+  "と",
+  "から",
+  "まで",
+  "より",
+  "について",
+  "によって"
+]);
 
-let worker = null;
+const NOMINAL_MARKERS = new Set([
+  "は",
+  "が",
+  "も"
+]);
 
-function dictionaryUrl() {
-  return new URL(
-    "./dictionaries/unidic-mecab-2.1.2_bin.zip",
-    document.baseURI
-  ).href;
-}
-
-export async function initializeMecab(
-  onProgress = () => {}
+function classifyMarkedPhrase(
+  contentToken,
+  particleToken
 ) {
-  if (worker) {
-    return worker;
+  const particle = particleToken.surface;
+
+  /*
+   * 「は」「が」「も」の付いた句は、
+   * 現在の表示規約ではN系列に残す。
+   *
+   * 私 + は → 私は：N
+   * 太郎 + が → 太郎が：N
+   */
+  if (NOMINAL_MARKERS.has(particle)) {
+    return {
+      category: "N",
+      phraseCategory: "N",
+      markerType:
+        particle === "は"
+          ? "topic"
+          : particle === "が"
+            ? "nominative"
+            : "additive"
+    };
   }
 
-  onProgress(
-    "MeCab/WASMとUniDicを読み込んでいます…"
-  );
-
-  worker = await MecabWorker.create(dictionaryUrl());
-
-  onProgress("MeCab/UniDic準備完了");
-
-  return worker;
-}
-
-function firstValue(object, keys) {
-  for (const key of keys) {
-    const value = object?.[key];
-
-    if (
-      value !== undefined &&
-      value !== null &&
-      value !== "" &&
-      value !== "*"
-    ) {
-      return value;
-    }
+  /*
+   * 格助詞・後置詞が主要部となる句はP系列。
+   *
+   * 公園 + で → 公園で：P
+   * 岐阜 + に → 岐阜に：P
+   * 本 + を   → 本を：P
+   */
+  if (POSTPOSITIONS.has(particle)) {
+    return {
+      category: "P",
+      phraseCategory: "P",
+      markerType: "postposition"
+    };
   }
 
-  return "";
-}
-
-function normalizeFeature(node) {
-  const feature =
-    node.feature ??
-    node.features ??
-    [];
-
-  let fields = [];
-
-  if (Array.isArray(feature)) {
-    fields = feature;
-  } else if (typeof feature === "string") {
-    fields = feature.split(",");
-  } else if (
-    feature &&
-    Array.isArray(feature.values)
-  ) {
-    fields = feature.values;
-  }
-
-  const objectFeature =
-    feature &&
-    typeof feature === "object" &&
-    !Array.isArray(feature)
-      ? feature
-      : {};
-
-  const pos =
-    firstValue(objectFeature, [
-      "pos1",
-      "pos",
-      "partOfSpeech"
-    ]) ||
-    fields[0] ||
-    "未知語";
-
-  const pos2 =
-    firstValue(objectFeature, [
-      "pos2",
-      "subpos1",
-      "posDetail1"
-    ]) ||
-    fields[1] ||
-    "";
-
-  const pos3 =
-    firstValue(objectFeature, [
-      "pos3",
-      "subpos2",
-      "posDetail2"
-    ]) ||
-    fields[2] ||
-    "";
-
-  const cType =
-    firstValue(objectFeature, [
-      "cType",
-      "conjugationType"
-    ]) ||
-    fields[4] ||
-    "";
-
-  const cForm =
-    firstValue(objectFeature, [
-      "cForm",
-      "conjugationForm"
-    ]) ||
-    fields[5] ||
-    "";
-
-  const lemma =
-    firstValue(objectFeature, [
-      "lemma",
-      "orthBase",
-      "baseForm"
-    ]) ||
-    fields[7] ||
-    fields[6] ||
-    node.surface;
-
+  /*
+   * 未分類の助詞は、誤ってPと断定せず、
+   * 元の語彙範疇を暫定的に保持する。
+   */
   return {
-    pos: String(pos),
-    pos2: String(pos2),
-    pos3: String(pos3),
-    cType: String(cType),
-    cForm: String(cForm),
-    lemma: String(lemma),
-    rawFeature: feature
+    category: contentToken.pos,
+    phraseCategory: contentToken.pos,
+    markerType: "unclassified"
   };
-}
-
-function mapPartOfSpeech(morpheme) {
-  const description = [
-    morpheme.pos,
-    morpheme.pos2,
-    morpheme.pos3
-  ].join(",");
-
-  if (/補助記号|記号|空白/.test(description)) {
-    return "Punct";
-  }
-
-  if (/助動詞/.test(description)) {
-    return "I";
-  }
-
-  if (/動詞/.test(description)) {
-    return "V";
-  }
-
-  if (/形容詞|形状詞/.test(description)) {
-    return "A";
-  }
-
-  if (/副詞/.test(description)) {
-    return "Adv";
-  }
-
-  if (/連体詞/.test(description)) {
-    return "Det";
-  }
-
-  if (/接続詞/.test(description)) {
-    return "C";
-  }
-
-  if (/助詞/.test(description)) {
-    if (
-      /終助詞|接続助詞/.test(description) ||
-      ["か", "ので", "のに", "けれど"].includes(
-        morpheme.surface
-      )
-    ) {
-      return "C";
-    }
-
-    return "P";
-  }
-
-  if (/名詞|代名詞|固有名詞/.test(description)) {
-    return "N";
-  }
-
-  return "Unknown";
-}
-
-export async function tokenize(input) {
-  const mecab = await initializeMecab();
-  const nodes = await mecab.parseToNodes(input);
-  const output = [];
-
-  for (const node of nodes) {
-    const surface = firstValue(node, [
-      "surface",
-      "word",
-      "literal",
-      "string"
-    ]);
-
-    if (
-      !surface ||
-      /^(BOS|EOS)$/.test(surface)
-    ) {
-      continue;
-    }
-
-    const feature = normalizeFeature({
-      ...node,
-      surface
-    });
-
-    const pos = mapPartOfSpeech({
-      surface,
-      ...feature
-    });
-
-    if (pos === "Punct") {
-      continue;
-    }
-
-    output.push({
-      surface,
-      ...feature,
-      pos,
-      base: feature.lemma || surface,
-      source: "MeCab / UniDic"
-    });
-  }
-
-  return output;
 }
 
 export function group(tokens) {
@@ -247,9 +81,8 @@ export function group(tokens) {
     const next = tokens[index + 1];
 
     /*
-     * サ変名詞 + 「する」の活用形
+     * サ変名詞＋する
      *
-     * 例：
      * 勉強 + し → 勉強し
      * 解析 + する → 解析する
      */
@@ -273,8 +106,17 @@ export function group(tokens) {
           next.surface,
 
         pos: "V",
+        phraseCategory: "V",
         base: current.surface + "する",
-        parts: [current, next],
+
+        particle: null,
+        markerType: null,
+
+        parts: [
+          current,
+          next
+        ],
+
         kind: "predicate"
       });
 
@@ -283,53 +125,84 @@ export function group(tokens) {
     }
 
     /*
-     * 内容語 + 助詞
+     * 内容語＋助詞
      *
-     * 内部では形態素を分けたまま保持し、
-     * 投射経路の表示上は一単位へまとめる。
-     *
-     * 例：
-     * 私 + は → 私は
-     * 公園 + で → 公園で
+     * 内部では二形態素を保持しながら、
+     * 投射経路では一つの表示単位にまとめる。
      */
     if (
       ["N", "A", "Adv"].includes(current.pos) &&
       next?.pos === "P"
     ) {
+      const classification =
+        classifyMarkedPhrase(current, next);
+
       output.push({
         surface:
           current.surface +
           next.surface,
 
         content: current.surface,
-        pos: current.pos,
+
+        /*
+         * ここが重要。
+         *
+         * 私は   → N
+         * 公園で → P
+         * 岐阜に → P
+         * 本を   → P
+         */
+        pos: classification.category,
+
+        phraseCategory:
+          classification.phraseCategory,
+
         base:
           current.base ||
           current.surface,
 
         particle: next.surface,
-        parts: [current, next],
+
+        markerType:
+          classification.markerType,
+
+        complementCategory:
+          current.pos,
+
+        parts: [
+          current,
+          next
+        ],
 
         kind:
-          next.surface === "は"
-            ? "topic"
-            : "case"
+          classification.category === "P"
+            ? "postpositionalPhrase"
+            : classification.markerType
       });
 
       index++;
       continue;
     }
 
+    /*
+     * 結合しない通常の形態素
+     */
     output.push({
       surface: current.surface,
       content: current.surface,
       pos: current.pos,
+      phraseCategory: current.pos,
 
       base:
         current.base ||
         current.surface,
 
-      parts: [current],
+      particle: null,
+      markerType: null,
+
+      parts: [
+        current
+      ],
 
       kind:
         current.pos === "I"
