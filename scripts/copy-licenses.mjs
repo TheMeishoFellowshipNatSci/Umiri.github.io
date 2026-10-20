@@ -1,0 +1,1 @@
+import{copyFileSync,existsSync,mkdirSync}from"node:fs";mkdirSync("THIRD_PARTY_LICENSES",{recursive:true});for(const n of["LICENSE","LICENSE.mecab","LICENSE.unidic"]){const s=`node_modules/mecab-web-worker/${n}`;if(existsSync(s))copyFileSync(s,`THIRD_PARTY_LICENSES/${n}`)}
