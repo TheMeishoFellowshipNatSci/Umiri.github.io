@@ -1,6 +1,578 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Xバー統語解析器 MeCab版</title><link rel="stylesheet" href="./style.css"></head><body><header><p>LOCAL MECAB / X-BAR PARSER</p><h1>Xバー統語解析器 <small>MeCab搭載版 0.5</small></h1><span>外部APIなし</span></header><main><aside><section><label for="input">解析する日本語文</label><textarea id="input">私は日本語を勉強します。</textarea><button id="analyze" disabled>解析する</button><div id="examples"></div></section><section><h2>解析状態</h2><strong id="score">0</strong> / 100<div class="meter"><i id="meter"></i></div><p id="frame"></p></section></aside><article><nav><button data-tab="paths" class="active">投射経路</button><button data-tab="morph">MeCab形態素</button><button data-tab="structure">構造</button><button data-tab="grammar">規則</button></nav><div class="head"><h2>解析結果</h2><span id="status">初期化中</span><p id="counts"></p></div><div id="paths" class="panel active"><div id="path-list"></div><div id="diagnostics"></div></div><div id="morph" class="panel"><div id="morph-list"></div><h3>統語表示単位</h3><div id="groups"></div></div><div id="structure" class="panel"><pre id="brackets"></pre></div><div id="grammar" class="panel"><pre>X″ → 指定部 X′
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1578bd">
+  <title>Umiri 1.2</title>
+  <link rel="stylesheet" href="./style.css">
+  <style>
+    :root {
+      --u-blue-900: #0b568f;
+      --u-blue-700: #167cc2;
+      --u-blue-500: #51aee8;
+      --u-blue-200: #c8e3f5;
+      --u-blue-100: #eaf5fc;
+      --u-border: #739dbc;
+      --u-ink: #173c5a;
+      --u-muted: #607c90;
+      --u-paper: #ffffff;
+      --u-warn: #d88800;
+      --u-danger: #a52626;
+      --u-shadow: 0 12px 42px rgba(11, 55, 88, .30);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background: #d4e8f6;
+      color: var(--u-ink);
+      font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+    }
+    button, textarea, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    svg { display: block; }
+    [hidden] { display: none !important; }
+
+    /* 構造図エディターと共通化した上部シェル */
+    body > header.umiri-titlebar {
+      min-height: 31px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+      background: linear-gradient(#5ab4ef 0, #258fd3 48%, #0871bd 52%, #1685d0 100%);
+      border-bottom: 1px solid #075a99;
+      box-shadow: inset 0 1px rgba(255,255,255,.55);
+      text-shadow: 0 1px rgba(0,0,0,.25);
+    }
+    .umiri-appmark { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .umiri-titlebar strong { font-size: 13px; }
+    .umiri-titlebar .product-subtitle { opacity: .92; font-size: 12px; }
+    .umiri-titlebar .developer { margin-left: auto; font-size: 11px; }
+
+    .umiri-ribbon {
+      min-height: 94px;
+      padding: 4px 8px 2px;
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      background: linear-gradient(#fff 0, #fafcfe 48%, #e5f0f8 73%, #c9deee 100%);
+      border-bottom: 1px solid var(--u-border);
+      box-shadow: inset 0 1px #fff;
+    }
+    .ribbon-group {
+      min-width: max-content;
+      display: flex;
+      flex-direction: column;
+      padding: 0 7px;
+      border-right: 1px solid #a4bfd2;
+      box-shadow: 1px 0 #fff;
+    }
+    .ribbon-actions { flex: 1; display: flex; align-items: stretch; gap: 3px; }
+    .ribbon-label { font-size: 10px; text-align: center; color: #587286; line-height: 15px; }
+    .ribbon-button, .license-link {
+      min-width: 62px;
+      min-height: 63px;
+      padding: 5px 8px;
+      border: 1px solid transparent;
+      border-radius: 2px;
+      background: transparent;
+      text-decoration: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .ribbon-button:hover, .license-link:hover {
+      border-color: #e1a134;
+      background: linear-gradient(#fffde9, #ffe5a0 49%, #ffc24d 50%, #ffd879);
+    }
+    .ribbon-button:disabled { opacity: .48; cursor: wait; }
+    .ribbon-icon { width: 31px; height: 31px; fill: none; stroke: #24577f; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* 既存app.jsが参照する構造とIDは一切変更しない */
+    body > main {
+      width: min(1220px, calc(100% - 14px));
+      min-height: calc(100vh - 150px);
+      margin: 6px auto 0;
+      display: grid;
+      grid-template-columns: minmax(280px, 355px) 1fr;
+      background: var(--u-paper);
+      border: 1px solid var(--u-border);
+      box-shadow: 0 2px 8px rgba(20,74,108,.18);
+    }
+    body > main > aside {
+      padding: 18px;
+      background: linear-gradient(90deg, #f8fcff, #e9f5fd);
+      border-right: 1px solid #9cb9ce;
+    }
+    body > main > aside section {
+      margin: 0 0 15px;
+      padding: 14px;
+      background: #fff;
+      border: 1px solid #a6bed0;
+      box-shadow: inset 0 1px #fff;
+    }
+    body > main > aside label, body > main > aside h2 { display: block; margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+    #input { width: 100%; min-height: 132px; padding: 10px; resize: vertical; border: 1px solid #789fbd; background: #fff; line-height: 1.65; }
+    #analyze {
+      width: 100%; margin-top: 9px; padding: 9px 12px;
+      color: #fff; font-weight: 700; border: 1px solid #0c5e9a;
+      background: linear-gradient(#5db7ef, #1178bd);
+    }
+    #analyze:hover { background: linear-gradient(#70c3f5, #1687cf); }
+    #examples { display: grid; gap: 5px; margin-top: 10px; }
+    #examples button { padding: 6px; text-align: left; border: 1px solid #a5bed1; background: #f3f9fd; }
+    #score { font-size: 40px; line-height: 1; color: #0e6fae; }
+    .meter { height: 8px; margin: 10px 0; overflow: hidden; background: #dcebf5; border: 1px solid #aac3d5; }
+    #meter { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #49a6df, #0c6dac); transition: width .25s; }
+    #frame { font-size: 12px; line-height: 1.7; }
+
+    body > main > article { min-width: 0; }
+    body > main > article nav {
+      display: flex; padding-left: 14px; overflow-x: auto;
+      background: linear-gradient(#edf7fd, #c6e0f2); border-bottom: 1px solid var(--u-border);
+    }
+    body > main > article nav button {
+      min-width: 100px; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; background: transparent;
+    }
+    body > main > article nav button.active { background: #fff; border-color: var(--u-border); font-weight: 700; }
+    .head { padding: 14px 20px 8px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #e0e9ef; }
+    .head h2 { margin: 0; font-size: 18px; }
+    #status { margin-left: auto; padding: 5px 9px; border: 1px solid #94b8d1; background: #e9f6ff; font-size: 12px; }
+    #counts { margin: 0; font-size: 12px; color: var(--u-muted); }
+    .panel { display: none; padding: 18px 20px 30px; }
+    .panel.active { display: block; }
+    .path { margin: 7px 0; padding: 11px 13px; border: 1px solid #cad8e2; background: #fff; font-family: "Yu Mincho", "MS Mincho", serif; line-height: 1.65; }
+    .path b { display: inline-block; min-width: 38px; color: #6a8ba2; }
+    .warning { margin: 7px 0; padding: 9px 12px; border-left: 4px solid var(--u-warn); background: #fff4d4; }
+    .row { display: grid; grid-template-columns: 130px 90px 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid #dce7ee; }
+    .chip { display: inline-block; margin: 4px; padding: 7px 9px; border: 1px solid #91b4cc; background: #eef8ff; }
+    #brackets, #grammar pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+    #brackets { padding: 16px; color: #f2f8fc; background: #173247; }
+
+    body > footer.umiri-statusbar {
+      min-height: 26px; display: flex; align-items: center; gap: 18px; padding: 3px 10px;
+      background: linear-gradient(#eef8fe, #bdd9ed); border-top: 1px solid var(--u-border); font-size: 11px;
+    }
+    .umiri-statusbar span:nth-child(2) { margin-left: auto; }
+
+    /* 初回設定・情報ダイアログ */
+    .umiri-shade { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 10px; background: rgba(12,48,75,.48); }
+    .umiri-wizard {
+      width: min(780px, 100%); height: min(570px, 100%); display: flex; flex-direction: column;
+      background: #fff; border: 1px solid #255e91; box-shadow: var(--u-shadow);
+    }
+    .wizard-head {
+      min-height: 90px; padding: 17px 26px; display: flex; align-items: center; gap: 17px;
+      background: linear-gradient(120deg, #fbfdff, #d9edfb 63%, #b5d9f3); border-bottom: 1px solid #88afd0;
+    }
+    .wizard-logo { width: 58px; height: 58px; padding: 9px; color: #1676b9; border: 1px solid #83acd0; background: #fff; }
+    .wizard-logo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .wizard-head h1 { margin: 0 0 5px; font-size: 21px; }
+    .wizard-head p { margin: 0; font-size: 12px; }
+    .wizard-body { flex: 1; min-height: 0; padding: 22px 34px; overflow: auto; }
+    .wizard-body h2 { margin-top: 0; font-weight: 500; }
+    .wizard-body li { margin: 8px 0; }
+    .terms-box { max-height: 290px; overflow: auto; padding: 14px; border: 1px solid #789fbd; line-height: 1.75; background: #fff; }
+    .license-card { margin: 9px 0; padding: 10px 12px; border: 1px solid #aec5d7; background: #f5faff; }
+    .wizard-error { min-height: 1.4em; color: var(--u-danger); font-weight: 700; }
+    .wizard-buttons { padding: 10px 18px; display: flex; justify-content: flex-end; gap: 8px; background: #e5f2fb; border-top: 1px solid #94b6d0; }
+    .wizard-buttons button, .dialog-buttons button { min-width: 88px; padding: 6px 15px; border: 1px solid #628db0; background: linear-gradient(#fff, #d2e7f5); }
+    .wizard-buttons button:hover, .dialog-buttons button:hover { background: linear-gradient(#fffde5, #ffc750); border-color: #d88b1a; }
+
+    .umiri-dialog { width: min(680px, 100%); max-height: min(600px, 100%); display: flex; flex-direction: column; background: #fff; border: 1px solid #255e91; box-shadow: var(--u-shadow); }
+    .dialog-title { padding: 9px 13px; font-weight: 700; background: linear-gradient(#edf8ff, #b9daf2); border-bottom: 1px solid #799fbc; }
+    .dialog-content { padding: 18px; overflow: auto; }
+    .dialog-buttons { padding: 9px 13px; display: flex; justify-content: flex-end; background: #edf7fd; border-top: 1px solid #abc4d8; }
+
+    @media (max-width: 780px) {
+      .umiri-titlebar .developer { display: none; }
+      body > main { grid-template-columns: 1fr; }
+      body > main > aside { border-right: 0; border-bottom: 1px solid #9cb9ce; }
+      .umiri-ribbon { min-height: 82px; }
+      .ribbon-button, .license-link { min-height: 54px; min-width: 56px; }
+      .ribbon-icon { width: 25px; height: 25px; }
+      .row { grid-template-columns: 100px 70px 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="umiri-titlebar">
+    <svg class="umiri-appmark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 3h11l5 5v13H4zM14 3v6h6M8 13h8M8 17h5"/>
+    </svg>
+    <strong>Umiri 1.2</strong>
+    <span class="product-subtitle">Xバー統語解析器 MeCab搭載版</span>
+    <span class="developer">開発: 明照の同志 人文社会学系統</span>
+  </header>
+
+  <section class="umiri-ribbon" aria-label="コマンド">
+    <div class="ribbon-group">
+      <div class="ribbon-actions">
+        <button class="ribbon-button" type="button" id="ribbonAnalyze">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>
+          <span>解析</span>
+        </button>
+        <button class="ribbon-button" type="button" id="interactiveHelp">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4zM8 9h8M8 13h5"/></svg>
+          <span>対話指定</span>
+        </button>
+      </div>
+      <div class="ribbon-label">解析</div>
+    </div>
+
+    <div class="ribbon-group">
+      <div class="ribbon-actions">
+        <button class="ribbon-button" type="button" id="saveJundai">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h14l2 2v16H4zM7 3v7h9V3M8 15h8v6H8z"/></svg>
+          <span>.jundai保存</span>
+        </button>
+      </div>
+      <div class="ribbon-label">構造図エディター</div>
+    </div>
+
+    <div class="ribbon-group">
+      <div class="ribbon-actions">
+        <button class="ribbon-button" type="button" id="showSetup">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5h.01"/></svg>
+          <span>初期設定</span>
+        </button>
+        <button class="ribbon-button" type="button" id="showTerms">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h6"/></svg>
+          <span>利用規約</span>
+        </button>
+        <button class="ribbon-button" type="button" id="showLicenses">
+          <svg class="ribbon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h4"/></svg>
+          <span>ライセンス</span>
+        </button>
+      </div>
+      <div class="ribbon-label">情報</div>
+    </div>
+  </section>
+
+  <main>
+    <aside>
+      <section>
+        <label for="input">解析する日本語文</label>
+        <textarea id="input">私は日本語を勉強します。</textarea>
+        <button id="analyze" disabled>解析する</button>
+        <div id="examples"></div>
+      </section>
+      <section>
+        <h2>解析状態</h2>
+        <strong id="score">0</strong> / 100
+        <div class="meter"><i id="meter"></i></div>
+        <p id="frame"></p>
+      </section>
+    </aside>
+
+    <article>
+      <nav aria-label="解析結果の表示切替">
+        <button data-tab="paths" class="active">投射経路</button>
+        <button data-tab="morph">MeCab形態素</button>
+        <button data-tab="structure">構造</button>
+        <button data-tab="grammar">規則</button>
+      </nav>
+      <div class="head">
+        <h2>解析結果</h2>
+        <span id="status">初期化中</span>
+        <p id="counts"></p>
+      </div>
+      <div id="paths" class="panel active">
+        <div id="path-list"></div>
+        <div id="diagnostics"></div>
+      </div>
+      <div id="morph" class="panel">
+        <div id="morph-list"></div>
+        <h3>統語表示単位</h3>
+        <div id="groups"></div>
+      </div>
+      <div id="structure" class="panel">
+        <pre id="brackets"></pre>
+      </div>
+      <div id="grammar" class="panel">
+        <pre>X″ → 指定部 X′
 X′ → 補語 X
 C″ → C′
 C′ → I″ C
 I″ → N″ I′
-I′ → V″ I</pre></div></article></main><footer>入力は外部へ送信されません。 <a href="./THIRD_PARTY_NOTICES.txt">第三者ライセンス</a></footer><script type="module" src="./js/app.js"></script></body></html>
+I′ → V″ I</pre>
+      </div>
+    </article>
+  </main>
+
+  <footer class="umiri-statusbar">
+    <span>Umiri 1.2</span>
+    <span>入力文は外部へ送信されません</span>
+    <span>開発: 明照の同志 人文社会学系統</span>
+  </footer>
+
+  <!-- 初回利用時およびサイトデータ消去後に表示 -->
+  <div id="setupShade" class="umiri-shade" hidden>
+    <section class="umiri-wizard" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+      <header class="wizard-head">
+        <div class="wizard-logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><path d="M8 7h24l8 8v26H8zM31 7v10h9M15 23h18M15 29h18M15 35h12"/></svg>
+        </div>
+        <div>
+          <h1 id="setupTitle">Umiri 1.2 初期設定</h1>
+          <p>利用開始前の確認</p>
+        </div>
+      </header>
+      <div class="wizard-body">
+        <section class="setup-page" data-step="0">
+          <h2>Umiri 1.2 へようこそ</h2>
+          <p>Umiriは形態素解析とXバー形式の構造表示を組み合わせた教育用ソフトウェアです。</p>
+          <ul>
+            <li>本ツールは参考用です。</li>
+            <li>開発元：明照の同志 人文社会学系統</li>
+            <li>（1.2新機能）明照の同志 自然科学系統の提供する，迪温書院シリーズ　「構造図エディター3.0」で統語樹にすることが可能です。</li>
+          </ul>
+        </section>
+        <section class="setup-page" data-step="1" hidden>
+          <h2>利用前の注意事項と利用規約</h2>
+          <div class="terms-box">
+            <p><strong>第1条 開発元</strong><br>本ソフトウェアは明照の同志 人文社会学系統が開発・提供します。</p>
+            <p><strong>第2条 解析結果</strong><br>解析結果の完全性，正確性，特定目的への適合性は保証されません。結果について，利用者自身が確認してください。作成した結果について，本会は著作権を主張しません。</p>
+            <p><strong>第3条 個人情報収集について</strong><br>本ソフトウェアでは個人情報を収集しておりません。</p>
+            <p><strong>第4条 例文について</strong><br>社会風紀を乱す不適切な例文の作成・利用は、本規約への違反とします。
+            <p><strong>第5条 個人情報収集について</strong><br>ブラウザのサイトデータを削除すると初期設定も消去されます。必要な解析結果は <code>.jundai</code> 形式で保存してください。</p>
+            <p><strong>第6条 免責</strong><br>本ソフトウェアは現状有姿で提供されます。データ損失に備え、利用者自身で保存およびバックアップを行ってください。</p>
+            <p><strong>第6条 開発者</strong><br>不具合，お問い合わせは「明照の同志 人文社会学系統」にお寄せください。</p>
+          </div>
+          <p><label><input type="checkbox" id="acceptTerms"> 上記の注意事項と利用規約に同意します</label></p>
+          <p id="setupError" class="wizard-error" aria-live="polite"></p>
+        </section>
+        <section class="setup-page" data-step="2" hidden>
+          <h2>第三者ソフトウェアとライセンス</h2>
+          <div class="license-card"><strong>MeCab</strong><br>形態素解析エンジン。配布物に含まれるライセンス文書および著作権表示が適用されます。</div>
+          <div class="license-card"><strong>mecab-web-worker</strong><br>ブラウザのWeb WorkerおよびWebAssembly上でMeCabを実行するためのソフトウェア。MIT Licenseが適用されます。</div>
+          <div class="license-card"><strong>UniDic</strong><br>日本語形態素解析辞書。配布物に含まれるUniDicのライセンス条件が適用されます。</div>
+          <p>完全な著作権表示、許諾条件および免責条項は、「第三者ソフトウェアとライセンス」よりご確認ください。</p>
+        </section>
+        <section class="setup-page" data-step="3" hidden>
+          <h2>準備完了</h2>
+          <p>「秉至志以成巧技 遇賢主而賦霊魂」</p>
+          <p>至志を秉ちて以て巧技を成し 賢主に遇ひて霊魂を賦す。</p>
+        </section>
+      </div>
+      <footer class="wizard-buttons">
+        <button type="button" id="setupBack">戻る</button>
+        <button type="button" id="setupNext">次へ</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="infoShade" class="umiri-shade" hidden>
+    <section class="umiri-dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+      <header class="dialog-title" id="dialogTitle">情報</header>
+      <div class="dialog-content" id="dialogContent"></div>
+      <footer class="dialog-buttons"><button type="button" id="closeDialog">閉じる</button></footer>
+    </section>
+  </div>
+
+  <!-- 既存の解析ロジックは変更しない -->
+  <script type="module" src="./js/app.js"></script>
+
+  <!-- Umiri 1.2のUI、ウィザード、.jundai出力をこのHTML内だけで実装 -->
+  <script>
+    (() => {
+      "use strict";
+
+      const SETUP_KEY = "umiri-1.2.setup";
+      const $ = (selector) => document.querySelector(selector);
+      const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+      const setupShade = $("#setupShade");
+      const infoShade = $("#infoShade");
+      const setupPages = $$(".setup-page");
+      let setupStep = 0;
+
+      function showSetup(step = 0) {
+        setupStep = step;
+        renderSetup();
+        setupShade.hidden = false;
+      }
+
+      function renderSetup() {
+        setupPages.forEach((page, index) => page.hidden = index !== setupStep);
+        $("#setupBack").disabled = setupStep === 0;
+        $("#setupNext").textContent = setupStep === setupPages.length - 1 ? "利用を開始" : "次へ";
+      }
+
+      function setupIsComplete() {
+        try {
+          const value = JSON.parse(localStorage.getItem(SETUP_KEY) || "null");
+          return value?.accepted === true;
+        } catch {
+          return false;
+        }
+      }
+
+      $("#setupBack").addEventListener("click", () => {
+        if (setupStep > 0) setupStep -= 1;
+        renderSetup();
+      });
+
+      $("#setupNext").addEventListener("click", () => {
+        if (setupStep === 1 && !$("#acceptTerms").checked) {
+          $("#setupError").textContent = "利用規約への同意が必要です。";
+          return;
+        }
+        $("#setupError").textContent = "";
+        if (setupStep < setupPages.length - 1) {
+          setupStep += 1;
+          renderSetup();
+          return;
+        }
+        localStorage.setItem(SETUP_KEY, JSON.stringify({
+          accepted: true,
+          version: "1.2",
+          completedAt: new Date().toISOString()
+        }));
+        setupShade.hidden = true;
+      });
+
+      $("#showSetup").addEventListener("click", () => showSetup(0));
+
+      function openDialog(title, html) {
+        $("#dialogTitle").textContent = title;
+        $("#dialogContent").innerHTML = html;
+        infoShade.hidden = false;
+      }
+
+      $("#closeDialog").addEventListener("click", () => infoShade.hidden = true);
+      infoShade.addEventListener("click", (event) => {
+        if (event.target === infoShade) infoShade.hidden = true;
+      });
+
+      $("#showTerms").addEventListener("click", () => openDialog("Umiri 1.2 利用規約", `
+        <div class="terms-box">
+          <p><strong>目的</strong><br>研究・教育支援のために提供します。</p>
+          <p><strong>解析結果</strong><br>解析結果の完全性は保証されません。重要な分析では利用者自身が構造を確認してください。</p>
+          <p><strong>登録・通信</strong><br>利用者登録はありません。入力文は外部APIへ送信されません。</p>
+          <p><strong>保存</strong><br>必要な結果は.jundai形式で保存してください。</p>
+          <p><strong>開発</strong><br>明照の同志 人文社会学系統</p>
+        </div>`));
+
+      $("#showLicenses").addEventListener("click", () => openDialog("第三者ソフトウェア", `
+        <div class="license-card"><strong>MeCab</strong><br>配布物に含まれるMeCabライセンスが適用されます。</div>
+        <div class="license-card"><strong>mecab-web-worker</strong><br>MIT Licenseが適用されます。</div>
+        <div class="license-card"><strong>UniDic</strong><br>配布物に含まれるUniDicライセンスが適用されます。</div>
+        <p><a href="./THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener">THIRD_PARTY_NOTICES.txtを開く</a></p>`));
+
+      $("#ribbonAnalyze").addEventListener("click", () => $("#analyze").click());
+      $("#interactiveHelp").addEventListener("click", () => openDialog("対話指定について", `
+        <p>複文、埋込み文、付加節など、自動解析だけでは節境界を一意に決めにくい文は、形態素と統語表示単位を確認しながら解析してください。</p>
+        <p>このHTML版では既存の解析機能を変更していません。対話指定の結果を構文木へ反映する機能は、解析ロジック側の対応後に有効化できます。</p>`));
+
+      /*
+       * app.jsが#bracketsへ出力した括弧表記を読み取り、構造図エディター用の木に変換する。
+       * 解析ロジックの変数へ直接アクセスしないため、既存JavaScriptの修正は不要。
+       */
+      function tokenizeBracketSource(source) {
+        return source.match(/\[|\]|[^\s\[\]]+/g) || [];
+      }
+
+      function parseBracketTree(source) {
+        const tokens = tokenizeBracketSource(source.trim());
+        let cursor = 0;
+
+        function parseNode() {
+          if (tokens[cursor] !== "[") throw new Error("構造の開始記号が見つかりません。");
+          cursor += 1;
+          const label = tokens[cursor++];
+          if (!label || label === "]") throw new Error("ノードラベルを読み取れません。");
+
+          const children = [];
+          const terminalParts = [];
+
+          while (cursor < tokens.length && tokens[cursor] !== "]") {
+            if (tokens[cursor] === "[") children.push(parseNode());
+            else terminalParts.push(tokens[cursor++]);
+          }
+
+          if (tokens[cursor] !== "]") throw new Error("構造の終了記号が不足しています。");
+          cursor += 1;
+
+          return {
+            uid: createUid(),
+            label,
+            trace: /^t(?:_|$)/.test(label),
+            terminal: terminalParts.join(" "),
+            children
+          };
+        }
+
+        if (!tokens.length) throw new Error("解析済みの括弧構造がありません。");
+        const tree = parseNode();
+        if (cursor !== tokens.length) throw new Error("括弧構造の末尾に未処理の内容があります。");
+        return tree;
+      }
+
+      function createUid() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return window.crypto.randomUUID().replaceAll("-", "");
+        }
+        return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+      }
+
+      function safeFileName(text) {
+        const base = (text || "Umiri構造図")
+          .trim()
+          .replace(/[\\/:*?"<>|]/g, "_")
+          .replace(/\s+/g, " ")
+          .slice(0, 40);
+        return base || "Umiri構造図";
+      }
+
+      function downloadJundai() {
+        try {
+          const source = $("#brackets").textContent.trim();
+          const tree = parseBracketTree(source);
+          const documentData = {
+            format: "jundai-tree-document",
+            version: 1,
+            application: "構造図エディター",
+            username: "",
+            head_left: true,
+            movement_arrows: [],
+            tree
+          };
+
+          const blob = new Blob(
+            [JSON.stringify(documentData, null, 2)],
+            { type: "application/json;charset=utf-8" }
+          );
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = safeFileName($("#input").value) + ".jundai";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+        } catch (error) {
+          openDialog(".jundai保存エラー", `<p>${escapeHtml(error.message || error)}</p><p>先に文を解析し、「構造」タブで括弧表示が出ていることを確認してください。</p>`);
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (character) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        })[character]);
+      }
+
+      $("#saveJundai").addEventListener("click", downloadJundai);
+
+      if (!setupIsComplete()) showSetup(0);
+    })();
+  </script>
+</body>
+</html>
