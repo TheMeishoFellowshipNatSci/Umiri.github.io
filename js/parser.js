@@ -1,1 +1,325 @@
-import{frames}from"./lexicon.js";let id=0;const N=(label,children=[],surface=null)=>({id:++id,label,children,surface}),project=(c,g)=>N(c+"″",[N(c+"′",[N(c,[],g.surface)])]);export function parse(gs){id=0;const warnings=[],vi=gs.map(x=>x.pos).lastIndexOf("V");if(vi<0)return{root:N("C″",[N("C′",[N("I″",gs[0]?[project("N",gs[0])]:[])])]),warnings:["動詞主要部がありません。"],score:40,frame:{gloss:"なし"}};const pred=gs[vi],before=gs.slice(0,vi),after=gs.slice(vi+1),frame=frames[pred.base]||{required:[],optional:["が","は","を","に","へ","で","と"],gloss:"未登録動詞・汎用フレーム"},ps=before.map(g=>({g,n:project(g.pos==="Adv"?"Adv":g.pos==="A"?"A":"N",g)})),sub=ps.find(x=>["は","が"].includes(x.g.particle)),comp=ps.filter(x=>x!==sub&&x.g.pos!=="Adv").map(x=>x.n),adv=ps.filter(x=>x.g.pos==="Adv").map(x=>x.n),vp=N("V″",[...adv,N("V′",[...comp,N("V",[],pred.surface)])]),infl=after.find(x=>x.pos==="I"),ip=N("I″",[...(sub?[sub.n]:[]),N("I′",[vp,N("I",[],infl?.surface||"∅")])]),cp=N("C″",[N("C′",[ip,N("C",[],after.find(x=>x.pos==="C")?.surface||"∅")])]),seen=new Set(before.map(x=>x.particle).filter(Boolean));for(const r of frame.required)if(!seen.has(r))warnings.push(`「${pred.base}」が要求する「${r}」格がありません。`);if(!sub)warnings.push("表面上の主題・主語がありません。");if(frame.gloss.startsWith("未登録"))warnings.push("動詞フレームが未登録です。");return{root:cp,warnings,score:Math.max(25,96-warnings.length*12),frame,pred}}export function paths(root){const o=[];function w(n,p=[]){const q=[...p,n.label];if(n.surface!==null){if(n.surface!=="∅")o.push({path:q,surface:n.surface});return}n.children.forEach(c=>w(c,q))}w(root);return o}export function brackets(n){return n.surface!==null?`[${n.label} ${n.surface}]`:`[${n.label} ${n.children.map(brackets).join(" ")}]`}
+import { frames } from "./lexicon.js";
+
+let id = 0;
+
+const createNode = (
+  label,
+  children = [],
+  surface = null,
+  metadata = {}
+) => ({
+  id: ++id,
+  label,
+  children,
+  surface,
+  metadata
+});
+
+function projectLexicalItem(category, group) {
+  return createNode(
+    category + "″",
+    [
+      createNode(
+        category + "′",
+        [
+          createNode(
+            category,
+            [],
+            group.surface,
+            {
+              base: group.base,
+              particle: group.particle,
+              markerType: group.markerType,
+              parts: group.parts
+            }
+          )
+        ]
+      )
+    ],
+    null,
+    {
+      phraseCategory: category,
+      surfaceUnit: group.surface
+    }
+  );
+}
+
+function projectGroup(group) {
+  const category =
+    group.phraseCategory ||
+    group.pos ||
+    "Unknown";
+
+  return projectLexicalItem(
+    category,
+    group
+  );
+}
+
+function defaultFrame() {
+  return {
+    required: [],
+    optional: [
+      "が",
+      "は",
+      "を",
+      "に",
+      "へ",
+      "で",
+      "と",
+      "から",
+      "まで"
+    ],
+    gloss: "未登録動詞・汎用フレーム"
+  };
+}
+
+export function parse(groups) {
+  id = 0;
+
+  const warnings = [];
+
+  const predicateIndex = groups
+    .map(group => group.pos)
+    .lastIndexOf("V");
+
+  if (predicateIndex < 0) {
+    const fragmentNodes =
+      groups.map(projectGroup);
+
+    return {
+      root: createNode(
+        "C″",
+        [
+          createNode(
+            "C′",
+            [
+              createNode(
+                "I″",
+                fragmentNodes
+              )
+            ]
+          )
+        ]
+      ),
+
+      warnings: [
+        "動詞主要部がありません。"
+      ],
+
+      score: 40,
+
+      frame: {
+        gloss: "なし"
+      },
+
+      predicate: null
+    };
+  }
+
+  const predicate =
+    groups[predicateIndex];
+
+  const before =
+    groups.slice(0, predicateIndex);
+
+  const after =
+    groups.slice(predicateIndex + 1);
+
+  const frame =
+    frames[predicate.base] ||
+    defaultFrame();
+
+  const phrases = before.map(group => ({
+    group,
+    node: projectGroup(group)
+  }));
+
+  const subject =
+    phrases.find(entry =>
+      entry.group.pos === "N" &&
+      ["は", "が"].includes(
+        entry.group.particle
+      )
+    );
+
+  const dependents = phrases
+    .filter(entry => entry !== subject)
+    .map(entry => entry.node);
+
+  const verbPhrase =
+    createNode(
+      "V″",
+      [
+        createNode(
+          "V′",
+          [
+            ...dependents,
+
+            createNode(
+              "V",
+              [],
+              predicate.surface,
+              {
+                base:
+                  predicate.base,
+
+                parts:
+                  predicate.parts
+              }
+            )
+          ]
+        )
+      ]
+    );
+
+  const inflection =
+    after.find(group =>
+      group.pos === "I"
+    );
+
+  const inflectionPhrase =
+    createNode(
+      "I″",
+      [
+        ...(subject
+          ? [subject.node]
+          : []),
+
+        createNode(
+          "I′",
+          [
+            verbPhrase,
+
+            createNode(
+              "I",
+              [],
+              inflection?.surface ||
+                "∅"
+            )
+          ]
+        )
+      ]
+    );
+
+  const complementizer =
+    after.find(group =>
+      group.pos === "C"
+    );
+
+  const clause =
+    createNode(
+      "C″",
+      [
+        createNode(
+          "C′",
+          [
+            inflectionPhrase,
+
+            createNode(
+              "C",
+              [],
+              complementizer?.surface ||
+                "∅"
+            )
+          ]
+        )
+      ]
+    );
+
+  const particles = new Set(
+    before
+      .map(group => group.particle)
+      .filter(Boolean)
+  );
+
+  for (
+    const requiredParticle
+    of frame.required
+  ) {
+    if (
+      !particles.has(requiredParticle)
+    ) {
+      warnings.push(
+        `「${predicate.base}」が要求する` +
+        `「${requiredParticle}」格がありません。`
+      );
+    }
+  }
+
+  if (!subject) {
+    warnings.push(
+      "表面上の主題・主語がありません。"
+    );
+  }
+
+  if (
+    frame.gloss.startsWith("未登録")
+  ) {
+    warnings.push(
+      "動詞フレームが未登録です。"
+    );
+  }
+
+  return {
+    root: clause,
+    warnings,
+
+    score: Math.max(
+      25,
+      96 - warnings.length * 12
+    ),
+
+    frame,
+    predicate
+  };
+}
+
+export function paths(root) {
+  const output = [];
+
+  function walk(node, parentPath = []) {
+    const currentPath = [
+      ...parentPath,
+      node.label
+    ];
+
+    if (node.surface !== null) {
+      if (node.surface !== "∅") {
+        output.push({
+          path: currentPath,
+          surface: node.surface
+        });
+      }
+
+      return;
+    }
+
+    for (const child of node.children) {
+      walk(child, currentPath);
+    }
+  }
+
+  walk(root);
+
+  return output;
+}
+
+export function brackets(node) {
+  if (node.surface !== null) {
+    return `[${node.label} ${node.surface}]`;
+  }
+
+  return (
+    `[${node.label}` +
+    (
+      node.children.length
+        ? " " +
+          node.children
+            .map(brackets)
+            .join(" ")
+        : ""
+    ) +
+    "]"
+  );
+}
