@@ -1,1 +1,0 @@
-import{cpSync,copyFileSync,mkdirSync}from"node:fs";mkdirSync("public/THIRD_PARTY_LICENSES",{recursive:true});cpSync("THIRD_PARTY_LICENSES","public/THIRD_PARTY_LICENSES",{recursive:true});copyFileSync("THIRD_PARTY_NOTICES.txt","public/THIRD_PARTY_NOTICES.txt");
